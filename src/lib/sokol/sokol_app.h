@@ -2105,7 +2105,6 @@ inline void sapp_run(const sapp_desc& desc) { return sapp_run(&desc); }
     #include <windows.h>
     #include <windowsx.h>
     #include <shellapi.h>
-    #include <dwmapi.h> // small change to get dark titlebar
     #if !defined(SOKOL_NO_ENTRY)    // if SOKOL_NO_ENTRY is defined, it's the applications' responsibility to use the right subsystem
         #if defined(SOKOL_WIN32_FORCE_MAIN)
             #pragma comment (linker, "/subsystem:console")
@@ -2120,7 +2119,6 @@ inline void sapp_run(const sapp_desc& desc) { return sapp_run(&desc); }
     #pragma comment (lib, "user32")
     #pragma comment (lib, "shell32")    /* CommandLineToArgvW, DragQueryFileW, DragFinished */
     #pragma comment (lib, "gdi32")
-    #pragma comment (lib, "dwmapi") // small change to get dark titlebar
     #if defined(SOKOL_D3D11)
         #pragma comment (lib, "dxgi")
         #pragma comment (lib, "d3d11")
@@ -7641,9 +7639,6 @@ _SOKOL_PRIVATE void _sapp_win32_create_window(void) {
     _sapp.win32.dc = GetDC(_sapp.win32.hwnd);
     _sapp.win32.hmonitor = MonitorFromWindow(_sapp.win32.hwnd, MONITOR_DEFAULTTONULL);
     SOKOL_ASSERT(_sapp.win32.dc);
-
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(_sapp.win32.hwnd, 20, &dark, sizeof(dark)); // small change to get dark titlebar
 
     /* this will get the actual windowed-mode window size, if fullscreen
        is requested, the set_fullscreen function will then capture the
