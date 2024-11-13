@@ -65,7 +65,7 @@ static void init(void) {
 	});
 
 	state.pip = sg_make_pipeline(&(sg_pipeline_desc) {
-		.shader = sg_make_shader(shd_shader_desc(sg_query_backend())),
+		.shader = sg_make_shader(display_shader_desc(sg_query_backend())),
 		.layout = {
 			.attrs = {
 				[0].format = SG_VERTEXFORMAT_FLOAT2,
