@@ -1,5 +1,11 @@
 #define SOKOL_IMPL
+
+#ifdef _WIN32
 #define SOKOL_D3D11
+#else
+#define SOKOL_GLCORE
+#endif
+
 #include "sokol_app.h"
 #include "sokol_gfx.h"
 #include "sokol_glue.h"
@@ -11,6 +17,28 @@
 
 #define WIDTH 320
 #define HEIGHT 240
+
+static struct {
+	struct {
+		uint8_t data[WIDTH * HEIGHT];
+		sg_image img;
+		sg_image pal_img;
+		sg_sampler smp;
+	} fb;
+	struct {
+		sg_image img;
+		sg_sampler smp;
+		sg_buffer vbuf;
+		sg_pipeline pip;
+		sg_attachments attachments;
+		sg_pass_action pass_action;
+	} offscreen;
+	struct {
+		sg_buffer vbuf;
+		sg_pipeline pip;
+		sg_pass_action pass_action;
+	} display;
+} state;
 
 static const uint32_t palette[16] = {
 	0xFF000000,     // std black
@@ -31,30 +59,6 @@ static const uint32_t palette[16] = {
 	0xFFFFFFFF,     // bright white
 };
 
-static struct {
-	struct {
-		sg_image img;
-		sg_image pal_img;
-		sg_sampler smp;
-		uint8_t data[WIDTH * HEIGHT];
-	} fb;
-
-	struct {
-		sg_image img;
-		sg_sampler smp;
-		sg_buffer vbuf;
-		sg_pipeline pip;
-		sg_pass_action pass_action;
-		sg_attachments attachments;
-	} offscreen;
-
-	struct {
-		sg_buffer vbuf;
-		sg_pipeline pip;
-		sg_pass_action pass_action;
-	} display;
-} state;
-
 static const float verts[] = {
 	0.0f, 0.0f, 0.0f, 0.0f,
 	1.0f, 0.0f, 1.0f, 0.0f,
@@ -70,7 +74,6 @@ static const float verts_flipped[] = {
 };
 
 static void init(void) {
-	// investigate modifying default values here...
 	sg_setup(&(sg_desc) {
 		.environment = sglue_environment()
 	});
@@ -99,7 +102,6 @@ static void init(void) {
 	state.offscreen.vbuf = sg_make_buffer(&(sg_buffer_desc) {
 		.data = SG_RANGE(verts)
 	});
-
 	state.offscreen.pip = sg_make_pipeline(&(sg_pipeline_desc) {
 		.shader = sg_make_shader(offscreen_shader_desc(sg_query_backend())),
 		.layout = {
@@ -121,7 +123,6 @@ static void init(void) {
 			.size = sizeof(verts)
 		}
 	});
-
 	state.display.pip = sg_make_pipeline(&(sg_pipeline_desc) {
 		.shader = sg_make_shader(display_shader_desc(sg_query_backend())),
 		.layout = {
@@ -167,33 +168,32 @@ static void init(void) {
 	}
 }
 
-static void calc_viewport(int *x, int *y, int *w, int *h) {
-	int window_w = sapp_width();
-	int window_h = sapp_height();
-
-	int scale_factor_w = window_w / WIDTH;
-	int scale_factor_h = window_h / HEIGHT;
-
-	// Choose the smaller scale factor to fit within the window
-	int scale_factor = (scale_factor_w < scale_factor_h) ? scale_factor_w : scale_factor_h;
-	if (scale_factor < 1) {
-		// If the window is smaller than the framebuffer, scale down to 1x (smallest integer scale factor)
-		scale_factor = 1;
+static void apply_viewport(void) {
+	float cw = sapp_widthf();
+	if (cw < 1.0f) {
+		cw = 1.0f;
+	}
+	float ch = sapp_heightf();
+	if (ch < 1.0f) {
+		ch = 1.0f;
 	}
 
-	// Calculate the viewport dimensions based on the chosen scale factor
-	int vp_w = WIDTH * scale_factor;
-	int vp_h = HEIGHT * scale_factor;
+	const float canvas_aspect = cw / ch;
+	const float emu_aspect = (float) WIDTH / (float) HEIGHT;
 
-	// Center the viewport within the window
-	int vp_x = (window_w - vp_w) / 2;
-	int vp_y = (window_h - vp_h) / 2;
-
-	// Set the output values
-	*x = vp_x;
-	*y = vp_y;
-	*w = vp_w;
-	*h = vp_h;
+	float vp_x, vp_y, vp_w, vp_h;
+	if (emu_aspect < canvas_aspect) {
+		vp_y = 0.0f;
+		vp_h = ch;
+		vp_w = ch * emu_aspect;
+		vp_x = (cw - vp_w) / 2;
+	} else {
+		vp_x = 0.0f;
+		vp_w = cw;
+		vp_h = cw / emu_aspect;
+		vp_y = (ch - vp_h) / 2;
+	}
+	sg_apply_viewportf(vp_x, vp_y, vp_w, vp_h, true);
 }
 
 static void frame(void) {
@@ -218,14 +218,8 @@ static void frame(void) {
 		.samplers[SMP_smp] = state.fb.smp
 	});
 	const offscreen_vs_params_t vs_params = {
-		.uv_offset = {
-			(float) 0 / (float) WIDTH,
-			(float) 0 / (float) HEIGHT,
-		},
-		.uv_scale = {
-			(float) WIDTH / (float) WIDTH,
-			(float) HEIGHT / (float) HEIGHT
-		}
+		.uv_offset = { 0, 0 },
+		.uv_scale = { 1, 1 }
 	};
 	sg_apply_uniforms(UB_offscreen_vs_params, &SG_RANGE(vs_params));
 	sg_draw(0, 4, 1);
@@ -235,20 +229,23 @@ static void frame(void) {
 		.action = state.display.pass_action,
 		.swapchain = sglue_swapchain()
 	});
-
-	int vp_x, vp_y, vp_w, vp_h;
-	calc_viewport(&vp_x, &vp_y, &vp_w, &vp_h);
-	sg_apply_viewport(vp_x, vp_y, vp_w, vp_h, true);
-
+	apply_viewport();
 	sg_apply_pipeline(state.display.pip);
 	sg_apply_bindings(&(sg_bindings) {
 		.vertex_buffers[0] = state.display.vbuf,
-		.images[IMG_tex] = state.fb.img,
-		.samplers[SMP_smp] = state.fb.smp
+		.images[IMG_tex] = state.offscreen.img,
+		.samplers[SMP_smp] = state.offscreen.smp
 	});
 	sg_draw(0, 4, 1);
+	sg_apply_viewport(0, 0, sapp_width(), sapp_height(), true);
 	sg_end_pass();
 	sg_commit();
+}
+
+static void event(const sapp_event *event) {
+	if (event->type == SAPP_EVENTTYPE_KEY_DOWN && event->key_code == SAPP_KEYCODE_ENTER && event->modifiers == SAPP_MODIFIER_ALT) {
+		sapp_toggle_fullscreen();
+	}
 }
 
 static void cleanup(void) {
@@ -259,10 +256,10 @@ sapp_desc sokol_main(int argc, char **argv) {
 	return (sapp_desc) {
 		.init_cb = init,
 		.frame_cb = frame,
+		.event_cb = event,
 		.cleanup_cb = cleanup,
 		.width = 2 * WIDTH,
 		.height = 2 * HEIGHT,
-		.window_title = "Emu v0.1.0",
-		.icon.sokol_default = true
+		.window_title = "Emu v0.1.0"
 	};
 }
